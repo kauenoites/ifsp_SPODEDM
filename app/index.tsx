@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Keyboard, StyleSheet, Text, TextInput, View } from "react-native";
+import { Button, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { FlatList, GestureHandlerRootView } from "react-native-gesture-handler";
 
 import * as crypto from "expo-crypto";
@@ -8,6 +8,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 type uuid = string;
 
 type TodoItem = { id: uuid; value: string; done: boolean };
+type FilterType = "all" | "pending" | "completed";
 
 function ListItem({ todoItem, toggleTodo }: { todoItem: TodoItem; toggleTodo: (id: uuid) => void }) {
 
@@ -56,6 +57,32 @@ function AddTodoForm({ addTodoHandler }: { addTodoHandler: (text: string) => voi
   );
 }
 
+function FilterButtons({ currentFilter, setFilter }: { currentFilter: FilterType; setFilter: (filter: FilterType) => void }) {
+  return (
+    <View style={styles.filterContainer}>
+      <TouchableOpacity 
+        style={[styles.filterButton, currentFilter === "all" && styles.activeFilter]}
+        onPress={() => setFilter("all")}
+      >
+        <Text style={[styles.filterText, currentFilter === "all" && styles.activeFilterText]}>Todos</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={[styles.filterButton, currentFilter === "pending" && styles.activeFilter]}
+        onPress={() => setFilter("pending")}
+      >
+        <Text style={[styles.filterText, currentFilter === "pending" && styles.activeFilterText]}>Pendentes</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={[styles.filterButton, currentFilter === "completed" && styles.activeFilter]}
+        onPress={() => setFilter("completed")}
+      >
+        <Text style={[styles.filterText, currentFilter === "completed" && styles.activeFilterText]}>Concluídos</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
 
 export default function Index() {
   
@@ -65,6 +92,8 @@ export default function Index() {
     { id: crypto.randomUUID(), value: "Sample Todo 3", done: false },
   ]);
 
+  const [currentFilter, setCurrentFilter] = React.useState<FilterType>("all");
+
   const addTodo = (text: string) => {
     setTodos([...todos, { id: crypto.randomUUID(), value: text, done: false }]);
   };
@@ -72,6 +101,19 @@ export default function Index() {
   const toggleTodo = (id: uuid) => {
     setTodos(todos.map(todo => todo.id === id ? { ...todo, done: !todo.done } : todo));
   };
+
+  const getFilteredTodos = () => {
+    switch (currentFilter) {
+      case "pending":
+        return todos.filter(todo => !todo.done);
+      case "completed":
+        return todos.filter(todo => todo.done);
+      default:
+        return todos;
+    }
+  };
+
+  const filteredTodos = getFilteredTodos();
 
   return (
     <SafeAreaProvider>
@@ -81,10 +123,18 @@ export default function Index() {
             TODO List
           </Text>
           <AddTodoForm addTodoHandler={addTodo} />
+          
+          <FilterButtons currentFilter={currentFilter} setFilter={setCurrentFilter} />
+          
+          <Text style={styles.counterText}>
+            {filteredTodos.length} item(s) {currentFilter !== "all" ? `(${currentFilter === "pending" ? "pendentes" : "concluídos"})` : ""}
+          </Text>
+          
           <FlatList
             style={styles.list}
-            data={todos.sort((a, b) => a.done === b.done ? 0 : a.done ? 1 : -1)}
+            data={filteredTodos.sort((a, b) => a.done === b.done ? 0 : a.done ? 1 : -1)}
             renderItem={({ item }) => <ListItem todoItem={item} toggleTodo={toggleTodo} />}
+            keyExtractor={item => item.id}
           />
         </GestureHandlerRootView>
       </SafeAreaView>
@@ -123,8 +173,39 @@ const styles = StyleSheet.create({
     width: "100%",
     backgroundColor: "white",
     padding: 10,
-    marginTop: 20,
+    marginTop: 10,
+  },
+  filterContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginVertical: 15,
+    paddingHorizontal: 10,
+  },
+  filterButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    marginHorizontal: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#4CAF50", 
+    backgroundColor: "white",
+  },
+  activeFilter: {
+    backgroundColor: "#4CAF50", 
+  },
+  filterText: {
+    color: "#4CAF50", 
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  activeFilterText: {
+    color: "white", 
+    fontWeight: "600",
+  },
+  counterText: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 10,
+    textAlign: "center",
   },
 });
-
-
