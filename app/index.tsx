@@ -1,14 +1,12 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Button, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { FlatList, GestureHandlerRootView } from "react-native-gesture-handler";
 
-import * as crypto from "expo-crypto";
+import { SQLiteProvider, useSQLiteContext } from "expo-sqlite";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { addTodoToDB, getAllTodos, getDBVersion, getSQLiteVersion, migrateDB, toggleTodoStatus } from "./db";
+import { TodoItem, uuid } from "./types";
 
-type uuid = string;
-
-type TodoItem = { id: uuid; value: string; done: boolean };
-type FilterType = "all" | "pending" | "completed";
 
 function ListItem({ todoItem, toggleTodo }: { todoItem: TodoItem; toggleTodo: (id: uuid) => void }) {
 
@@ -21,12 +19,43 @@ function ListItem({ todoItem, toggleTodo }: { todoItem: TodoItem; toggleTodo: (i
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
       {!todoItem.done ? (
         <>
-          <Text style={styles.item}>{todoItem.value}</Text>
-          <Button title="Concluir" onPress={() => {handlePress(todoItem.id)}} color="green" />
+          <Text style={styles.item}>{todoItem.text}</Text>
+          <Button title="Concluir" onPress={() => { handlePress(todoItem.id) }} color="green" />
         </>
       ) : (
-        <Text style={styles.itemdone}>{todoItem.value}</Text>
+        <Text style={styles.itemdone}>{todoItem.text}</Text>
       )}
+    </View>
+  );
+}
+
+enum FilterOptions {
+  All = "all",
+  Pending = "pending",
+  Done = "done"
+}
+
+function TodosFilter({ selectedValue, setFilter }: { selectedValue: FilterOptions, setFilter: (value: FilterOptions) => void }) {
+  return (
+    <View style={filterStyles.filterMenu}>
+      <TouchableOpacity
+        style={[filterStyles.button, filterStyles.buttonAll, selectedValue === FilterOptions.All && filterStyles.buttonAllSelected]}
+        onPress={() => setFilter(FilterOptions.All)}
+      >
+        <Text style={[filterStyles.label, filterStyles.buttonAllLabel, selectedValue === FilterOptions.All && filterStyles.buttonAllSelectedLabel]}>Todos</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[filterStyles.button, filterStyles.buttonPending, selectedValue === FilterOptions.Pending && filterStyles.buttonPendingSelected]}
+        onPress={() => setFilter(FilterOptions.Pending)}
+      >
+        <Text style={[filterStyles.label, filterStyles.buttonPendingLabel, selectedValue === FilterOptions.Pending && filterStyles.buttonPendingSelectedLabel]}>Pendentes</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[filterStyles.button, filterStyles.buttonDone, selectedValue === FilterOptions.Done && filterStyles.buttonDoneSelected]}
+        onPress={() => setFilter(FilterOptions.Done)}
+      >
+        <Text style={[filterStyles.label, filterStyles.buttonDoneLabel, selectedValue === FilterOptions.Done && filterStyles.buttonDoneSelectedLabel]}>Concluídos</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -35,8 +64,8 @@ function AddTodoForm({ addTodoHandler }: { addTodoHandler: (text: string) => voi
   const [text, setText] = React.useState("");
 
   const handlePress = () => {
-    if(text.trim().length === 0) return;
-    
+    if (text.trim().length === 0) return;
+
     addTodoHandler(text);
     setText("");
     Keyboard.dismiss();
@@ -57,86 +86,118 @@ function AddTodoForm({ addTodoHandler }: { addTodoHandler: (text: string) => voi
   );
 }
 
-function FilterButtons({ currentFilter, setFilter }: { currentFilter: FilterType; setFilter: (filter: FilterType) => void }) {
+function Footer() {
+  const db = useSQLiteContext();
+
+  const [sqliteVersion, setSqliteVersion] = useState<string>("");
+  const [dbVersion, setDBVersion] = useState<string>();
+
+  useEffect( () => {
+    async function setup(){
+      const sqliteVersionResult = await getSQLiteVersion(db);
+      if (sqliteVersionResult) {
+        setSqliteVersion(sqliteVersionResult['sqlite_version()']);
+      }
+      else {
+        setSqliteVersion('unknown');
+      }
+
+      const dbVersionResult = await getDBVersion(db);
+      
+      if (dbVersionResult) {
+        setDBVersion(dbVersionResult['user_version'].toString());
+      }
+      else {
+        setDBVersion('unknown');
+      }
+
+
+
+    }
+
+    setup();
+  }, [db]);
+
   return (
-    <View style={styles.filterContainer}>
-      <TouchableOpacity 
-        style={[styles.filterButton, currentFilter === "all" && styles.activeFilter]}
-        onPress={() => setFilter("all")}
-      >
-        <Text style={[styles.filterText, currentFilter === "all" && styles.activeFilterText]}>Todos</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity 
-        style={[styles.filterButton, currentFilter === "pending" && styles.activeFilter]}
-        onPress={() => setFilter("pending")}
-      >
-        <Text style={[styles.filterText, currentFilter === "pending" && styles.activeFilterText]}>Pendentes</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity 
-        style={[styles.filterButton, currentFilter === "completed" && styles.activeFilter]}
-        onPress={() => setFilter("completed")}
-      >
-        <Text style={[styles.filterText, currentFilter === "completed" && styles.activeFilterText]}>Concluídos</Text>
-      </TouchableOpacity>
+    <View>
+      <Text style={{padding: 20}}>SQLite version: {sqliteVersion} / DBVersion: {dbVersion}</Text>
     </View>
   );
 }
 
-export default function Index() {
+function TodoList() {
   
-  const [todos, setTodos] = React.useState<TodoItem[]>([
-    { id: crypto.randomUUID(), value: "Sample Todo", done: false },
-    { id: crypto.randomUUID(), value: "Sample Todo 2", done: true },
-    { id: crypto.randomUUID(), value: "Sample Todo 3", done: false },
-  ]);
+  const [todos, setTodos] = React.useState<TodoItem[]>([]);
 
-  const [currentFilter, setCurrentFilter] = React.useState<FilterType>("all");
-
-  const addTodo = (text: string) => {
-    setTodos([...todos, { id: crypto.randomUUID(), value: text, done: false }]);
-  };
-
-  const toggleTodo = (id: uuid) => {
-    setTodos(todos.map(todo => todo.id === id ? { ...todo, done: !todo.done } : todo));
-  };
-
-  const getFilteredTodos = () => {
-    switch (currentFilter) {
-      case "pending":
-        return todos.filter(todo => !todo.done);
-      case "completed":
-        return todos.filter(todo => todo.done);
-      default:
-        return todos;
+  const db = useSQLiteContext();
+  
+  useEffect(() => {
+    async function load() {
+      const result = await getAllTodos(db);
+      setTodos(result);
     }
+    
+    load();
+
+  }, [db])
+
+
+  const [filter, setFilter] = React.useState<FilterOptions>(FilterOptions.All);
+
+  const addTodo = async (text: string) => {
+    await addTodoToDB(db, text);
+    const result = await getAllTodos(db);
+    setTodos(result);
   };
 
-  const filteredTodos = getFilteredTodos();
+  const toggleTodo = async (id: uuid) => {
+    await toggleTodoStatus(db, id);
+    const result = await getAllTodos(db);
+    setTodos(result);
+  };
 
+  return (
+    <GestureHandlerRootView style={styles.container}>
+      <Text style={{ fontSize: 32, fontWeight: "bold", marginTop: 20 }}>
+        TODO List
+      </Text>
+      <AddTodoForm addTodoHandler={addTodo} />
+      <TodosFilter selectedValue={filter} setFilter={setFilter} />
+      <FlatList
+        style={styles.list}
+        data={todos.filter(todo => {
+          switch (filter) {
+            case FilterOptions.All:
+              return true;
+            case FilterOptions.Pending:
+              return !todo.done;
+            case FilterOptions.Done:
+              return todo.done;
+            default:
+              return true;
+          }
+        }).sort((a, b) => {
+          const aDate = a.createdAt ?? new Date(0);
+          const bDate = b.createdAt ?? new Date(0);
+          return aDate === bDate ? 0 : aDate < bDate ? 1 : -1;
+        })}
+        renderItem={({ item }) => (
+          <ListItem todoItem={item} toggleTodo={toggleTodo} />
+        )}
+      />
+    </GestureHandlerRootView>
+  );
+}
+
+
+export default function Index() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={{ flex: 1, backgroundColor: "white" }}>
-        <GestureHandlerRootView style={styles.container}>
-          <Text style={{ fontSize: 32, fontWeight: "bold", marginTop: 20 }}>
-            TODO List
-          </Text>
-          <AddTodoForm addTodoHandler={addTodo} />
-          
-          <FilterButtons currentFilter={currentFilter} setFilter={setCurrentFilter} />
-          
-          <Text style={styles.counterText}>
-            {filteredTodos.length} item(s) {currentFilter !== "all" ? `(${currentFilter === "pending" ? "pendentes" : "concluídos"})` : ""}
-          </Text>
-          
-          <FlatList
-            style={styles.list}
-            data={filteredTodos.sort((a, b) => a.done === b.done ? 0 : a.done ? 1 : -1)}
-            renderItem={({ item }) => <ListItem todoItem={item} toggleTodo={toggleTodo} />}
-            keyExtractor={item => item.id}
-          />
-        </GestureHandlerRootView>
+        <SQLiteProvider databaseName="todos.db" onInit={migrateDB}>
+          <TodoList />
+          <Footer />
+        </SQLiteProvider>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -173,39 +234,79 @@ const styles = StyleSheet.create({
     width: "100%",
     backgroundColor: "white",
     padding: 10,
-    marginTop: 10,
+    marginTop: 20,
   },
-  filterContainer: {
+});
+
+const filterStyles = StyleSheet.create({
+  filterMenu: {
     flexDirection: "row",
-    justifyContent: "center",
-    marginVertical: 15,
-    paddingHorizontal: 10,
+    justifyContent: "space-between",
+    width: "100%",
+    paddingHorizontal: 20,
+    marginTop: 10
   },
-  filterButton: {
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    marginHorizontal: 5,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#4CAF50", 
-    backgroundColor: "white",
+
+  button: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 50,
+    alignSelf: 'flex-start',
+    marginHorizontal: '1%',
+    marginBottom: 6,
+    minWidth: '28%',
+    textAlign: 'center',
   },
-  activeFilter: {
-    backgroundColor: "#4CAF50", 
-  },
-  filterText: {
-    color: "#4CAF50", 
+
+  label: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: '500',
+    textAlign: 'center',
   },
-  activeFilterText: {
-    color: "white", 
-    fontWeight: "600",
+
+  buttonAll: {
+    backgroundColor: 'lightgreen',
   },
-  counterText: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 10,
-    textAlign: "center",
+  buttonAllSelected: {
+    backgroundColor: 'darkgreen',
+  },
+
+  buttonAllLabel: {
+    color: 'darkgreen',
+  },
+
+  buttonAllSelectedLabel: {
+    color: 'lightgreen',
+  },
+
+  buttonPending: {
+    backgroundColor: 'oldlace',
+  },
+  buttonPendingSelected: {
+    backgroundColor: 'coral',
+  },
+
+  buttonPendingLabel: {
+    color: 'coral',
+  },
+  buttonPendingSelectedLabel: {
+    color: 'oldlace',
+  },
+
+  buttonDone: {
+    backgroundColor: 'lightblue',
+  },
+  buttonDoneSelected: {
+    backgroundColor: 'royalblue',
+  },
+  buttonDoneLabel: {
+    color: 'royalblue',
+  },
+  buttonDoneSelectedLabel: {
+    color: 'lightblue',
+  },
+
+  selectedLabel: {
+    color: 'white',
   },
 });
